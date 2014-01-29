@@ -1,4 +1,4 @@
-import operator
+import operator, string
 import nltk.classify.util
 from nltk.classify import NaiveBayesClassifier
 import nltk, os, logging, json, ConfigParser, codecs
@@ -9,6 +9,7 @@ from sklearn.metrics import classification_report
 from nltk.metrics import BigramAssocMeasures
 from nltk.collocations import BigramCollocationFinder
 from nltk.corpus import stopwords
+import nltk;
 
 class BookClassifier:
 
@@ -25,6 +26,7 @@ class BookClassifier:
         self.train_file = os.path.join(self.data_dir, self.train_file_name)
 
         self.logger_file = os.path.join("OUTPUT", "BookClassifier.log") 
+        self.output_file = os.path.join("OUTPUT", "output.txt")
 
     def initialize_logger(self):
         logging.basicConfig(filename=self.logger_file, level=logging.INFO)
@@ -35,45 +37,67 @@ class BookClassifier:
         self.feature_extraction()       
         self.classification()
         self.cross_validation() 
+        self.testing()
 
     def feature_extraction(self):
         self.all_feature_selection()
+
+    def clean_book_title(self, title):
+        return nltk.word_tokenize(title.translate(None, string.punctuation))
+
+    def clean_book_author(self, author):
+        return author.split(";")
 
     def all_feature_selection(self):
         selected_feat_list = []
         category_dict = {}
         self.selected_feats = []
+        self.test_instances_list = []
 
         for instance in self.instance_list:
             if instance and instance.strip():
                 temp = instance.strip().split("\t")
                 if temp and len(temp) == 4:
                     key = temp[0]
-                    temp = temp[1:]
+                    new_temp = []
+                    new_temp.extend(self.clean_book_title(temp[2]))
+                    new_temp.extend(self.clean_book_author(temp[3]))
                     temp_list = []
-                    for feat in temp:
+                    for feat in new_temp:
                         if feat:
                             temp_list.append((feat, True))
                     self.selected_feats.append((dict(temp_list), key))            
-        
+                if temp and len(temp) == 3:
+                    self.test_instances_list.append(instance)                  
 
     def classification(self):
 
-        train_feats_count = int(len(self.selected_feats) * 0.75 )
+        self.nb_classifier = NaiveBayesClassifier.train(self.selected_feats)         
+         
 
-        train_features = self.selected_feats[:train_feats_count]
-        test_features = self.selected_feats[train_feats_count:]
-
-        self.nb_classifier = NaiveBayesClassifier.train(train_features)         
- 
-        print '\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n' % (nltk.classify.util.accuracy(self.nb_classifier, test_features))
-        self.nb_classifier.show_most_informative_features()
+    def testing(self):
+        
+        self.output_file_fd  = open(self.output_file, 'w')
+        for instance in self.test_instances_list:
+            temp = instance.strip().split("\t")
+            if temp and len(temp) == 3:
+                new_temp = []
+                temp_list = []
+                new_temp.extend(self.clean_book_title(temp[1]))
+                new_temp.extend(self.clean_book_author(temp[2]))
+                for feat in new_temp:
+                    if feat:
+                        temp_list.append((feat,True)) 
+            temp.insert(0, self.nb_classifier.classify(dict(temp_list)))
+            
+            self.output_file_fd.write("%s\n" % "\t".join(temp))
 
 
     def cross_validation(self):
 
         train_feats_count = int(len(self.selected_feats))
         fold_size = int(train_feats_count / 10)
+        acc_list = []
 
         for a in range(10):
             start_index = a * fold_size
@@ -83,11 +107,12 @@ class BookClassifier:
             test_features  = self.selected_feats[start_index:end_index] 
             
             self.nb_classifier = NaiveBayesClassifier.train(train_features)         
-     
-            print '\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n' % (nltk.classify.util.accuracy(self.nb_classifier, test_features))
+    
+            acc = nltk.classify.util.accuracy(self.nb_classifier, test_features) 
+            print "\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n" % acc
             #self.nb_classifier.show_most_informative_features()
-            
-
+            acc_list.append(acc)
+        print 'Average acc %s' % (float(sum(acc_list)/len(acc_list)))
 
     def preprocessing(self):
         self.initialize_logger()
