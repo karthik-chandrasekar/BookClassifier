@@ -27,6 +27,8 @@ class BookClassifier:
 
         self.logger_file = os.path.join("OUTPUT", "BookClassifier.log") 
         self.output_file = os.path.join("OUTPUT", "output.txt")
+        self.stopwords_set = set(stopwords.words('english'))    
+
 
     def initialize_logger(self):
         logging.basicConfig(filename=self.logger_file, level=logging.INFO)
@@ -36,8 +38,8 @@ class BookClassifier:
         self.preprocessing()
         self.feature_extraction()       
         self.classification()
-        self.cross_validation() 
         self.testing()
+        self.cross_validation() 
 
     def feature_extraction(self):
         self.all_feature_selection()
@@ -63,17 +65,32 @@ class BookClassifier:
                     new_temp.extend(self.clean_book_title(temp[2]))
                     new_temp.extend(self.clean_book_author(temp[3]))
                     temp_list = []
+                    selected_temp = []
                     for feat in new_temp:
-                        if feat:
+                        if feat and feat in self.best:
                             temp_list.append((feat, True))
+                            selected_temp.append(feat)        
+                    #temp_list.extend(self.get_bigram(selected_temp))
                     self.selected_feats.append((dict(temp_list), key))            
                 if temp and len(temp) == 3:
                     self.test_instances_list.append(instance)                  
 
+    def get_bigram(self, features_list):
+        score = BigramAssocMeasures.chi_sq
+        n = 250
+        all_bigrams = BigramCollocationFinder.from_words(features_list)
+        best_bigrams = all_bigrams.nbest(score, n)
+        selected_bigrams = [(bigram, True) for bigram in best_bigrams]
+        return selected_bigrams
+        
     def classification(self):
-
+        #Training NB classifier
         self.nb_classifier = NaiveBayesClassifier.train(self.selected_feats)         
-         
+        
+        #Training SVM classifier
+        self.svm_classifier = SklearnClassifier(LinearSVC()) 
+        self.svm_classifier.train(self.selected_feats)
+        
 
     def testing(self):
         
@@ -86,7 +103,7 @@ class BookClassifier:
                 new_temp.extend(self.clean_book_title(temp[1]))
                 new_temp.extend(self.clean_book_author(temp[2]))
                 for feat in new_temp:
-                    if feat:
+                    if feat and feat not in self.stopwords_set:
                         temp_list.append((feat,True)) 
             temp.insert(0, self.nb_classifier.classify(dict(temp_list)))
             
@@ -98,7 +115,7 @@ class BookClassifier:
         train_feats_count = int(len(self.selected_feats))
         fold_size = int(train_feats_count / 10)
         acc_list = []
-
+        svm_acc_list = []
         for a in range(10):
             start_index = a * fold_size
             end_index = start_index + fold_size
@@ -110,15 +127,60 @@ class BookClassifier:
     
             acc = nltk.classify.util.accuracy(self.nb_classifier, test_features) 
             print "\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n" % acc
-            #self.nb_classifier.show_most_informative_features()
             acc_list.append(acc)
+       
+            self.svm_classifier = SklearnClassifier(LinearSVC()) 
+            self.svm_classifier.train(train_features)
+            svm_acc = nltk.classify.util.accuracy(self.svm_classifier, test_features) 
+            print "\n ACCURACY - SVM  CLASSIFIER: %s \n" % svm_acc
+            
+            svm_acc_list.append(svm_acc)
+
         print 'Average acc %s' % (float(sum(acc_list)/len(acc_list)))
+        print 'Average svm acc %s' % (float(sum(svm_acc_list)/len(svm_acc_list)))
 
     def preprocessing(self):
         self.initialize_logger()
         self.open_files()
         self.load_data()
         self.close_files()        
+        self.compute_word_scores()
+
+
+    def compute_word_scores(self):
+       
+        freq_dist_obj = FreqDist()
+        cond_freq_dist_obj = ConditionalFreqDist()
+        key_set = set() 
+        key_count_dict = {}
+
+        for instance in self.instance_list:
+            temp = instance and instance.strip().split("\t") 
+            if not temp:continue;  
+            if not len(temp) == 4:continue;
+            key_set.add(temp[0])
+            key  = temp[0]
+            for feat in self.clean_book_title(temp[2]):
+                freq_dist_obj.inc(feat)
+                cond_freq_dist_obj[key].inc(feat)
+            
+        for key in key_set:
+            key_count_dict[key] = cond_freq_dist_obj[key].N()
+        total_word_count  = sum(key_count_dict.values())
+
+        word_score_dict = {}
+        for word, freq in freq_dist_obj.iteritems():
+            score = 0
+            for key in key_set:
+                 score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, key_count_dict.get(key,0)), total_word_count)
+            word_score_dict[word] = score
+        
+        self.best =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
+
+        total_select_count = int(len(self.best) * 0.85)
+        self.best = self.best[:total_select_count]
+        self.best = [pair[0] for pair in self.best]
+
 
     def open_files(self):
         self.train_file_fd = open(self.train_file, 'r') 
