@@ -86,13 +86,12 @@ class BookClassifier:
                     temp_list = []
                     selected_temp = []
                     for feat in new_temp:
-                        feat = self.stemmer.stem(feat)
                         if feat and feat in self.best and feat.lower() not in self.stopwords_set:
                             temp_list.append((feat, True))
                             if feat in toc_set:
                                 selected_temp.append(feat)        
-                    #temp_list.extend(self.get_bigram(selected_temp))
-                    self.selected_feats.append((dict(temp_list), key))            
+                    temp_list.extend(self.get_bigram(selected_temp))
+                self.selected_feats.append((dict(temp_list), key))            
                 if temp and len(temp) == 3:
                     self.test_instances_list.append(instance)                  
 
@@ -229,7 +228,6 @@ class BookClassifier:
             features = self.clean_book_title(temp[2])
             features.extend(self.bookid_features_dict.get(temp[1], []))
             for feat in features:
-                feat = self.stemmer.stem(feat)
                 freq_dist_obj.inc(feat)
                 cond_freq_dist_obj[key].inc(feat)
             
@@ -253,12 +251,11 @@ class BookClassifier:
         self.best = [pair[0] for pair in self.best]
 
     def clean_book_toc(self, toc):
-        return [self.stemmer.stem(word)  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
+        return [word  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
 
     def clean_and_structure_more_train_data(self):
         freq_dist_obj = FreqDist()
         cond_freq_dist_obj = ConditionalFreqDist()
-        self.bookid_features_dict = {}              
 
         for instance in self.s_instance_list:
             temp = instance and instance.strip().replace("↵","")
