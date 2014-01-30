@@ -90,18 +90,14 @@ class BookClassifier:
                     new_temp.extend(self.clean_book_title(temp[2]))
                     new_temp.extend(self.clean_author_name(temp[3]))
                     new_temp.extend(self.bookid_features_dict.get(temp[1], []))
-                    toc_set = set(self.bookid_features_dict.get(temp[1], set()))
                     temp_list = []
-                    selected_temp = []
                     for feat in new_temp:
-                        if feat and feat in self.best and feat.lower() not in self.stopwords_set:
+                        if feat and feat.lower() in self.best and feat.lower() not in self.stopwords_set:
                             temp_list.append((feat, True))
-                            if feat in toc_set:
-                                selected_temp.append(feat)        
-                    temp_list.extend(self.get_bigram(selected_temp))
-                self.selected_feats.append((dict(temp_list), key))            
-                if temp and len(temp) == 3:
+                    temp_list.extend(self.get_bigram(temp_list))
+                elif temp and len(temp) == 3:
                     self.test_instances_list.append(instance)                  
+                self.selected_feats.append((dict(temp_list), key))            
 
     def get_bigram(self, features_list):
         score = BigramAssocMeasures.chi_sq
@@ -130,9 +126,9 @@ class BookClassifier:
                 elif int(sys.argv[1]) == 2:
                     new_temp.extend(self.clean_book_toc(temp[1]))
                 for feat in new_temp:
-                    if feat:
+                    if feat and feat.lower() not in self.stopwords_set and feat.lower() in self.best:
                         temp_list.append((feat,True)) 
-                temp_list.extend(self.get_bigram(new_temp))
+                temp_list.extend(self.get_bigram([pair[0] for pair in temp_list if pair]))
             label = self.nb_classifier.classify(dict(temp_list))
             
             self.output_file_fd.write("%s\t%s\n" % (temp[0], label))
@@ -226,23 +222,22 @@ class BookClassifier:
         freq_dist_obj = FreqDist()
         cond_freq_dist_obj = ConditionalFreqDist()
         key_set = set() 
-        key_count_dict = {}
 
         for instance in self.instance_list:
             temp = instance and instance.strip().split("\t") 
             if not temp:continue  
             if not len(temp) == 4:continue
-            key_set.add(temp[0])
             key  = temp[0]
+            key_set.add(key)
             features = self.clean_book_title(temp[2])
+            features.extend(self.clean_author_name(temp[3]))
             features.extend(self.bookid_features_dict.get(temp[1], []))
             for feat in features:
                 freq_dist_obj.inc(feat)
                 cond_freq_dist_obj[key].inc(feat)
-            
+        total_word_count = 0    
         for key in key_set:
-            key_count_dict[key] = cond_freq_dist_obj[key].N()
-        total_word_count  = sum(key_count_dict.values())
+            total_word_count += cond_freq_dist_obj[key].N()
 
         self.key_set = key_set
     
@@ -250,14 +245,13 @@ class BookClassifier:
         for word, freq in freq_dist_obj.iteritems():
             score = 0
             for key in key_set:
-                score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, key_count_dict.get(key,0)), total_word_count)
+                score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, cond_freq_dist_obj[key].N()), total_word_count)
             word_score_dict[word] = score
         
         self.best =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
-
         total_select_count = int(len(self.best) * self.top_feat_per/float(100))
         self.best = self.best[:total_select_count]
-        self.best = [pair[0] for pair in self.best]
+        self.best = set([pair[0].lower() for pair in self.best if pair[0]])
 
     def clean_book_toc(self, toc):
         return [word  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
