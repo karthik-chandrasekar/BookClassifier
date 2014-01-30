@@ -15,44 +15,43 @@ class BookClassifier:
 
     def __init__(self):
     
-        self.config = ConfigParser.ConfigParser()
-        self.config.read("BookClassifier.config")
+        config = ConfigParser.ConfigParser()
+        config.read("BookClassifier.config")
 
         cur_dir = os.getcwd()
         #Config parameters
-        rel_dir_path = self.config.get('GLOBAL', 'data_dir')
-        op_dir_path = self.config.get('GLOBAL', 'output_dir')
-        self.train_file_name = self.config.get('GLOBAL', 'train_file_name')
-        self.second_train_file_name = self.config.get('GLOBAL', 'second_train_file_name')
-        self.bigram_count = int(self.config.get('GLOBAL', 'bigram_count'))
-        self.k_fold = int(self.config.get('GLOBAL', 'k_fold'))
-        self.top_feat_per = int(self.config.get('GLOBAL', 'top_feat_per'))
+        data_dir = config.get('GLOBAL', 'data_dir')
+        op_dir = config.get('GLOBAL', 'output_dir')
+        train_file = config.get('GLOBAL', 'train_file_name')
+        train_file_2 = config.get('GLOBAL', 'second_train_file_name')
+        self.bigram_threshold = int(config.get('GLOBAL', 'bigram_threshold'))
+        self.k_fold = int(config.get('GLOBAL', 'k_fold'))
+        self.unigram_threshold = int(config.get('GLOBAL', 'unigram_threshold'))
 
-        self.data_dir = os.path.join(cur_dir, rel_dir_path)
-        self.output_dir = os.path.join(cur_dir, op_dir_path)
-        self.train_file = os.path.join(self.data_dir, self.train_file_name)
-        self.second_train_file = os.path.join(self.data_dir, self.second_train_file_name)        
+        self.data_dir = os.path.join(cur_dir, data_dir)
+        self.output_dir = os.path.join(cur_dir, op_dir)
+        self.train_file = os.path.join(self.data_dir, train_file)
+        self.train_file_2 = os.path.join(self.data_dir, train_file_2)        
         self.logger_file = os.path.join(self.output_dir, "BookClassifier.log") 
         
         if int(sys.argv[1]) == 1:
-            self.output_file_name = self.config.get('GLOBAL', 'output_file_1') 
+            output_file = config.get('GLOBAL', 'output_file_1') 
         elif int(sys.argv[1]) ==2:
-            self.output_file_name = self.config.get('GLOBAL', 'output_file_2') 
+            output_file = config.get('GLOBAL', 'output_file_2') 
+        self.output_file = os.path.join(self.output_dir, output_file)
         
-        self.output_file = os.path.join(self.output_dir, self.output_file_name)
-        
-        #Data structures
+        #Data structures 
         self.stopwords_set = set(stopwords.words('english'))    
-        self.s_instance_list = []
-        self.selected_feats = []
-        self.test_instances_list = []
-        self.instance_list = []
-        self.best = []
-        self.key_set = set()
-        self.bookid_features_dict = {}
+        self.toc_list = []
+        self.training_feats = []
+        self.test_cases = []
+        self.book_instances = []
+        self.selected_features = []
+        self.book_category_set = set()
+        self.bookid_to_toc_dict = {}   #toc - table of contents
        
         self.train_file_fd = None 
-        self.second_train_file_fd = None
+        self.train_file_2_fd = None
         self.output_file_fd = None
 
         #classifiers
@@ -72,7 +71,6 @@ class BookClassifier:
         self.cross_validation() 
         self.close_files()        
 
-
     def clean_book_title(self, title):
         return nltk.word_tokenize(title.translate(None, string.punctuation))
 
@@ -80,93 +78,88 @@ class BookClassifier:
         return author.split(";")
 
     def feature_extraction(self):
-
-        for instance in self.instance_list:
+        for instance in self.book_instances:
             if instance and instance.strip():
-                temp = instance.strip().split("\t")
-                if temp and len(temp) == 4:
-                    key = temp[0]
-                    new_temp = []
-                    new_temp.extend(self.clean_book_title(temp[2]))
-                    new_temp.extend(self.clean_author_name(temp[3]))
-                    new_temp.extend(self.bookid_features_dict.get(temp[1], []))
-                    temp_list = []
-                    for feat in new_temp:
-                        if feat and feat.lower() in self.best and feat.lower() not in self.stopwords_set:
-                            temp_list.append((feat, True))
-                    temp_list.extend(self.get_bigram(temp_list))
-                elif temp and len(temp) == 3:
-                    self.test_instances_list.append(instance)                  
-                self.selected_feats.append((dict(temp_list), key))            
+                raw_data = instance.strip().split("\t")
+                if raw_data and len(raw_data) == 4:
+                    bookid = raw_data[0]
+                    features = []
+                    features.extend(self.clean_book_title(raw_data[2]))
+                    features.extend(self.clean_author_name(raw_data[3]))
+                    features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
+                    train_feats_list = []
+                    for feat in features:
+                        if feat and feat.lower() in self.selected_features and feat.lower() not in self.stopwords_set:
+                            train_feats_list.append((feat, True))
+                    train_feats_list.extend(self.get_bigram(train_feats_list))
+                elif raw_data and len(raw_data) == 3:
+                    self.test_cases.append(instance)                  
+                self.training_feats.append((dict(train_feats_list), bookid))            
 
     def get_bigram(self, features_list):
         score = BigramAssocMeasures.chi_sq
         all_bigrams = BigramCollocationFinder.from_words(features_list)
-        best_bigrams = all_bigrams.nbest(score, self.bigram_count)
+        best_bigrams = all_bigrams.nbest(score, self.bigram_threshold)
         selected_bigrams = [(bigram, True) for bigram in best_bigrams]
         return selected_bigrams
         
     def classification(self):
         #Training NB classifier
-        self.nb_classifier = NaiveBayesClassifier.train(self.selected_feats)         
+        self.nb_classifier = NaiveBayesClassifier.train(self.training_feats)         
         
         #Training SVM classifier
         self.svm_classifier = SklearnClassifier(LinearSVC()) 
-        self.svm_classifier.train(self.selected_feats)
+        self.svm_classifier.train(self.training_feats)
         
     def testing(self):
-        for instance in self.test_instances_list:
-            temp = instance.strip().split("\t")
-            if temp:
-                new_temp = []
-                temp_list = []
+        for instance in self.test_cases:
+            raw_data = instance.strip() and instance.strip().split("\t")
+            if raw_data:
+                features = []
+                train_feats_list = []
                 if int(sys.argv[1]) == 1:
-                    new_temp.extend(self.clean_book_title(temp[1]))
-                    new_temp.extend(self.clean_author_name(temp[2]))
+                    features.extend(self.clean_book_title(raw_data[1]))
+                    features.extend(self.clean_author_name(raw_data[2]))
                 elif int(sys.argv[1]) == 2:
-                    new_temp.extend(self.clean_book_toc(temp[1]))
-                for feat in new_temp:
-                    if feat and feat.lower() not in self.stopwords_set and feat.lower() in self.best:
-                        temp_list.append((feat,True)) 
-                temp_list.extend(self.get_bigram([pair[0] for pair in temp_list if pair]))
-            label = self.nb_classifier.classify(dict(temp_list))
+                    features.extend(self.clean_book_toc(raw_data[1]))
+                for feat in features:
+                    if feat and feat.lower() not in self.stopwords_set and feat.lower() in self.selected_features:
+                        train_feats_list.append((feat,True)) 
+                train_feats_list.extend(self.get_bigram([pair[0] for pair in train_feats_list if pair]))
             
-            self.output_file_fd.write("%s\t%s\n" % (temp[0], label))
+            label = self.nb_classifier.classify(dict(train_feats_list))
+            self.output_file_fd.write("%s\t%s\n" % (raw_data[0], label))
 
 
     def cross_validation(self):
-        train_feats_count = int(len(self.selected_feats))
+        train_feats_count = int(len(self.training_feats))
         fold_size = int(train_feats_count / self.k_fold)
-        acc_list = []
+        nb_acc_list = []
         svm_acc_list = []
 
         for a in range(self.k_fold):
             start_index = a * fold_size
             end_index = start_index + fold_size
 
-            train_features = self.selected_feats[:start_index] + self.selected_feats[end_index:]
-            test_features  = self.selected_feats[start_index:end_index] 
+            train_features = self.training_feats[:start_index] + self.training_feats[end_index:]
+            test_features  = self.training_feats[start_index:end_index] 
             
             self.nb_classifier = NaiveBayesClassifier.train(train_features)         
-    
-            acc = nltk.classify.util.accuracy(self.nb_classifier, test_features) 
-            print "\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n" % acc
-            acc_list.append(acc)
+            nb_acc = nltk.classify.util.accuracy(self.nb_classifier, test_features) 
+            nb_acc_list.append(nb_acc)
+            print "\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n" % nb_acc
        
             self.svm_classifier = SklearnClassifier(LinearSVC()) 
             self.svm_classifier.train(train_features)
             svm_acc = nltk.classify.util.accuracy(self.svm_classifier, test_features) 
-            print "\n ACCURACY - SVM  CLASSIFIER: %s \n" % svm_acc
-            
             svm_acc_list.append(svm_acc)
+            print "\n ACCURACY - SVM  CLASSIFIER: %s \n" % svm_acc
 
             self.compute_measures(test_features, self.nb_classifier, "NB")
             self.compute_measures(test_features, self.svm_classifier, "SVM")
-        
 
-        print 'Average acc %s' % (float(sum(acc_list)/len(acc_list)))
+        print 'Average acc %s' % (float(sum(nb_acc_list)/len(nb_acc_list)))
         print 'Average svm acc %s' % (float(sum(svm_acc_list)/len(svm_acc_list)))
-
 
     def compute_measures(self, test_features, classifier, classifier_name):
         actual_labels, predicted_labels = self.get_actual_and_predicted_labels(test_features, classifier)
@@ -177,7 +170,7 @@ class BookClassifier:
 
     def find_precision(self, actual_labels, predicted_labels):
         precision_list = []
-        for category in self.key_set:
+        for category in self.book_category_set:
             if not predicted_labels.get(category):
                 continue
             precision = nltk.metrics.precision(actual_labels.get(category, set()), predicted_labels.get(category, set()))
@@ -186,7 +179,7 @@ class BookClassifier:
 
     def find_recall(self, actual_labels, predicted_labels):
         recall_list = []
-        for category in self.key_set:
+        for category in self.book_category_set:
             if not actual_labels.get(category):
                 continue
             recall = nltk.metrics.recall(actual_labels.get(category, set()), predicted_labels.get(category, set()))
@@ -194,19 +187,18 @@ class BookClassifier:
         return float(sum(recall_list)/len(recall_list))
          
     def find_f_measure(self, precision, recall):
+        if precision == 0 and recall == 0:
+            return 0
         f_val = 2 * (precision * recall) / float(precision + recall)
         return f_val
-
 
     def get_actual_and_predicted_labels(self, test_features, classifier):
         actual_labels = {}
         predicted_labels = {}
-
         for i, (features, label) in enumerate(test_features):
             actual_labels.setdefault(label, set()).add(i)
             labels = classifier.classify(features)
             predicted_labels.setdefault(labels, set()).add(i)
-
         return (actual_labels, predicted_labels)
 
     def preprocessing(self):
@@ -221,53 +213,50 @@ class BookClassifier:
     def compute_scores(self):
         freq_dist_obj = FreqDist()
         cond_freq_dist_obj = ConditionalFreqDist()
-        key_set = set() 
+        self.book_category_set = set() 
 
-        for instance in self.instance_list:
-            temp = instance and instance.strip().split("\t") 
-            if not temp:continue  
-            if not len(temp) == 4:continue
-            key  = temp[0]
-            key_set.add(key)
-            features = self.clean_book_title(temp[2])
-            features.extend(self.clean_author_name(temp[3]))
-            features.extend(self.bookid_features_dict.get(temp[1], []))
+        for instance in self.book_instances:
+            raw_data = instance and instance.strip().split("\t") 
+            if not raw_data or len(raw_data) != 4 : continue  
+            bookid  = raw_data[0]
+            self.book_category_set.add(bookid)
+            features = []
+            features.extend(self.clean_book_title(raw_data[2]))
+            features.extend(self.clean_author_name(raw_data[3]))
+            features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
             for feat in features:
                 freq_dist_obj.inc(feat)
-                cond_freq_dist_obj[key].inc(feat)
+                cond_freq_dist_obj[bookid].inc(feat)
         total_word_count = 0    
-        for key in key_set:
-            total_word_count += cond_freq_dist_obj[key].N()
+        for bookid in self.book_category_set:
+            total_word_count += cond_freq_dist_obj[bookid].N()
 
-        self.key_set = key_set
-    
         word_score_dict = {}
         for word, freq in freq_dist_obj.iteritems():
             score = 0
-            for key in key_set:
-                score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, cond_freq_dist_obj[key].N()), total_word_count)
+            for bookid in self.book_category_set:
+                score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[bookid][word], (freq, cond_freq_dist_obj[bookid].N()), total_word_count)
             word_score_dict[word] = score
         
-        self.best =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
-        total_select_count = int(len(self.best) * self.top_feat_per/float(100))
-        self.best = self.best[:total_select_count]
-        self.best = set([pair[0].lower() for pair in self.best if pair[0]])
+        self.selected_features =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
+        total_select_count = int(len(self.selected_features) * self.unigram_threshold/float(100))
+        self.selected_features = self.selected_features[:total_select_count]
+        self.selected_features = set([pair[0].lower() for pair in self.selected_features if pair[0]])
 
     def clean_book_toc(self, toc):
         return [word  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
 
     def clean_and_structure_more_train_data(self):
-
-        for instance in self.s_instance_list:
-            temp = instance and instance.strip().replace("↵","")
-            if not temp:continue
-            key = temp.split("\t")[0]
-            temp = self.clean_book_toc(temp)
-            self.bookid_features_dict.setdefault(key, []).extend(temp[1:])
+        for instance in self.toc_list:
+            raw_data = instance and instance.strip().replace("↵","")
+            if not raw_data:continue
+            bookid = raw_data.split("\t")[0]
+            clean_data = self.clean_book_toc(raw_data)
+            self.bookid_to_toc_dict.setdefault(bookid, []).extend(clean_data[1:])
             
     def open_files(self):
         self.train_file_fd = open(self.train_file, 'r') 
-        self.second_train_file_fd = open(self.second_train_file, 'r')
+        self.train_file_2_fd = open(self.train_file_2, 'r')
         self.output_file_fd = open(self.output_file, 'w')
 
     def load_data(self):
@@ -276,19 +265,19 @@ class BookClassifier:
             self.load_more_train_data()
 
     def load_train_data(self):
-        self.instance_list = []
+        self.book_instances = []
         for instance in self.train_file_fd.readlines():
-            self.instance_list.append(instance) 
-        self.instance_list = self.instance_list[1:]
+            self.book_instances.append(instance) 
+        self.book_instances = self.book_instances[1:]
 
     def load_more_train_data(self):
-        for instance in self.second_train_file_fd.readlines():
-            self.s_instance_list.append(instance)
-        self.s_instance_list = self.s_instance_list[1:]
+        for instance in self.train_file_2_fd.readlines():
+            self.toc_list.append(instance)
+        self.toc_list = self.toc_list[1:]
 
     def close_files(self):
         self.train_file_fd.close() 
-        self.second_train_file_fd.close()
+        self.train_file_2_fd.close()
         self.output_file_fd.close()
 
 if __name__ == "__main__":
