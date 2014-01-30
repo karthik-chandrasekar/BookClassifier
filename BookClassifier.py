@@ -46,6 +46,7 @@ class BookClassifier:
         self.k_fold = int(self.config.get('GLOBAL', 'k_fold'))
         self.s_instance_list = []
         self.bookid_features_dict = {}
+        self.top_feat_per = int(self.config.get('GLOBAL', 'top_feat_per'))
 
     def initialize_logger(self):
         logging.basicConfig(filename=self.logger_file, level=logging.INFO)
@@ -246,7 +247,7 @@ class BookClassifier:
         
         self.best =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
 
-        total_select_count = int(len(self.best) * 0.30)
+        total_select_count = int(len(self.best) * self.top_feat_per/float(100))
         self.best = self.best[:total_select_count]
         self.best = [pair[0] for pair in self.best]
 
