@@ -1,7 +1,7 @@
 #coding=utf-8
 
 import operator, string, re, sys
-import nltk, os, logging, json, ConfigParser, codecs
+import nltk, os, logging, ConfigParser
 import nltk.classify.util
 from nltk.probability import FreqDist, ConditionalFreqDist
 from nltk.metrics import BigramAssocMeasures
@@ -10,7 +10,6 @@ from nltk.corpus import stopwords
 from nltk.classify import NaiveBayesClassifier
 from nltk.classify.scikitlearn import SklearnClassifier
 from sklearn.svm import LinearSVC
-from sklearn.metrics import classification_report
 
 class BookClassifier:
 
@@ -20,17 +19,19 @@ class BookClassifier:
         self.config.read("BookClassifier.config")
 
         cur_dir = os.getcwd()
+        #Config parameters
         rel_dir_path = self.config.get('GLOBAL', 'data_dir')
         op_dir_path = self.config.get('GLOBAL', 'output_dir')
+        self.train_file_name = self.config.get('GLOBAL', 'train_file_name')
+        self.second_train_file_name = self.config.get('GLOBAL', 'second_train_file_name')
+        self.bigram_count = int(self.config.get('GLOBAL', 'bigram_count'))
+        self.k_fold = int(self.config.get('GLOBAL', 'k_fold'))
+        self.top_feat_per = int(self.config.get('GLOBAL', 'top_feat_per'))
 
         self.data_dir = os.path.join(cur_dir, rel_dir_path)
         self.output_dir = os.path.join(cur_dir, op_dir_path)
-
-        self.train_file_name = self.config.get('GLOBAL', 'train_file_name')
         self.train_file = os.path.join(self.data_dir, self.train_file_name)
-        self.second_train_file_name = self.config.get('GLOBAL', 'second_train_file_name')
         self.second_train_file = os.path.join(self.data_dir, self.second_train_file_name)        
-
         self.logger_file = os.path.join(self.output_dir, "BookClassifier.log") 
         
         if int(sys.argv[1]) == 1:
@@ -39,14 +40,24 @@ class BookClassifier:
             self.output_file_name = self.config.get('GLOBAL', 'output_file_2') 
         
         self.output_file = os.path.join(self.output_dir, self.output_file_name)
+        
+        #Data structures
         self.stopwords_set = set(stopwords.words('english'))    
-        self.stemmer = nltk.stem.PorterStemmer()
-
-        self.bigram_count = int(self.config.get('GLOBAL', 'bigram_count'))
-        self.k_fold = int(self.config.get('GLOBAL', 'k_fold'))
         self.s_instance_list = []
+        self.selected_feats = []
+        self.test_instances_list = []
+        self.instance_list = []
+        self.best = []
+        self.key_set = set()
         self.bookid_features_dict = {}
-        self.top_feat_per = int(self.config.get('GLOBAL', 'top_feat_per'))
+       
+        self.train_file_fd = None 
+        self.second_train_file_fd = None
+        self.output_file_fd = None
+
+        #classifiers
+        self.nb_classifier = None
+        self.svm_classifier = None
 
     def initialize_logger(self):
         logging.basicConfig(filename=self.logger_file, level=logging.INFO)
@@ -65,14 +76,10 @@ class BookClassifier:
     def clean_book_title(self, title):
         return nltk.word_tokenize(title.translate(None, string.punctuation))
 
-    def clean_book_author(self, author):
+    def clean_author_name(self, author):
         return author.split(";")
 
     def feature_extraction(self):
-        selected_feat_list = []
-        category_dict = {}
-        self.selected_feats = []
-        self.test_instances_list = []
 
         for instance in self.instance_list:
             if instance and instance.strip():
@@ -81,7 +88,7 @@ class BookClassifier:
                     key = temp[0]
                     new_temp = []
                     new_temp.extend(self.clean_book_title(temp[2]))
-                    new_temp.extend(self.clean_book_author(temp[3]))
+                    new_temp.extend(self.clean_author_name(temp[3]))
                     new_temp.extend(self.bookid_features_dict.get(temp[1], []))
                     toc_set = set(self.bookid_features_dict.get(temp[1], set()))
                     temp_list = []
@@ -114,17 +121,21 @@ class BookClassifier:
     def testing(self):
         for instance in self.test_instances_list:
             temp = instance.strip().split("\t")
-            if temp and len(temp) == 3:
+            if temp:
                 new_temp = []
                 temp_list = []
-                new_temp.extend(self.clean_book_title(temp[1]))
-                new_temp.extend(self.clean_book_author(temp[2]))
+                if int(sys.argv[1]) == 1:
+                    new_temp.extend(self.clean_book_title(temp[1]))
+                    new_temp.extend(self.clean_author_name(temp[2]))
+                elif int(sys.argv[1]) == 2:
+                    new_temp.extend(self.clean_book_toc(temp[1]))
                 for feat in new_temp:
-                    if feat and feat not in self.stopwords_set:
+                    if feat:
                         temp_list.append((feat,True)) 
-            temp.insert(0, self.nb_classifier.classify(dict(temp_list)))
+                temp_list.extend(self.get_bigram(new_temp))
+            label = self.nb_classifier.classify(dict(temp_list))
             
-            self.output_file_fd.write("%s\t%s\n" % (temp[1], temp[0]))
+            self.output_file_fd.write("%s\t%s\n" % (temp[0], label))
 
 
     def cross_validation(self):
@@ -132,9 +143,6 @@ class BookClassifier:
         fold_size = int(train_feats_count / self.k_fold)
         acc_list = []
         svm_acc_list = []
-        bnb_acc_list = []
-        dtc_acc_list = []
-        rf_acc_list = []
 
         for a in range(self.k_fold):
             start_index = a * fold_size
@@ -222,8 +230,8 @@ class BookClassifier:
 
         for instance in self.instance_list:
             temp = instance and instance.strip().split("\t") 
-            if not temp:continue;  
-            if not len(temp) == 4:continue;
+            if not temp:continue  
+            if not len(temp) == 4:continue
             key_set.add(temp[0])
             key  = temp[0]
             features = self.clean_book_title(temp[2])
@@ -242,7 +250,7 @@ class BookClassifier:
         for word, freq in freq_dist_obj.iteritems():
             score = 0
             for key in key_set:
-                 score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, key_count_dict.get(key,0)), total_word_count)
+                score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[key][word], (freq, key_count_dict.get(key,0)), total_word_count)
             word_score_dict[word] = score
         
         self.best =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
@@ -255,8 +263,6 @@ class BookClassifier:
         return [word  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
 
     def clean_and_structure_more_train_data(self):
-        freq_dist_obj = FreqDist()
-        cond_freq_dist_obj = ConditionalFreqDist()
 
         for instance in self.s_instance_list:
             temp = instance and instance.strip().replace("↵","")
