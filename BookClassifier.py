@@ -15,10 +15,8 @@ from sklearn.svm import LinearSVC
 class BookClassifier:
 
     def __init__(self):
-    
         config = ConfigParser.ConfigParser()
         config.read("BookClassifier.config")
-
         cur_dir = os.getcwd()
         
         #Config parameters
@@ -82,6 +80,7 @@ class BookClassifier:
         return author.split(";")
 
     def feature_extraction(self):
+        #Features are extracted 
         for instance in self.book_instances:
             try:
                 raw_data = instance and instance.strip() and instance.strip().split("\t")
@@ -106,6 +105,7 @@ class BookClassifier:
                 continue
 
     def get_bigram(self, features_list):
+        #Top ten best bigrams are selected
         score = BigramAssocMeasures.chi_sq
         all_bigrams = BigramCollocationFinder.from_words(features_list)
         best_bigrams = all_bigrams.nbest(score, self.bigram_threshold)
@@ -121,6 +121,7 @@ class BookClassifier:
         self.svm_classifier.train(self.training_feats)
         
     def testing(self):
+        #Predicting output for the test instances
         for instance in self.test_cases:
             try:
                 raw_data = instance.strip() and instance.strip() and instance.strip().split("\t")
@@ -141,6 +142,7 @@ class BookClassifier:
                 
 
     def cross_validation(self):
+        #10 fold cross validation is performed
         train_feats_count = int(len(self.training_feats))
         fold_size = int(train_feats_count / self.k_fold)
         nb_accuracy_list = []
@@ -165,9 +167,9 @@ class BookClassifier:
             svm_accuracy_list.append(svm_acc)
 
             #Find F-Measure
-            nb_f_val = self.compute_measures(test_features, self.nb_classifier, "NB")
+            nb_f_val = self.compute_measures(test_features, self.nb_classifier)
             nb_f_val_list.append(nb_f_val)
-            svm_f_val = self.compute_measures(test_features, self.svm_classifier, "SVM")
+            svm_f_val = self.compute_measures(test_features, self.svm_classifier)
             svm_f_val_list.append(svm_f_val)
 
         self.logging.info('Average accuracy of Naive Bayes Classifier %s\n' % (float(sum(nb_accuracy_list)/len(nb_accuracy_list))))
@@ -175,7 +177,8 @@ class BookClassifier:
         self.logging.info('Average F measure of Naive Bayes Classifier %s\n' % (float(sum(nb_f_val_list)/len(nb_f_val_list))))
         self.logging.info('Average F measure of SVM Classifier %s\n' % (float(sum(svm_f_val_list)/len(svm_f_val_list))))
 
-    def compute_measures(self, test_features, classifier, classifier_name):
+    def compute_measures(self, test_features, classifier):
+        #Average F measure calculation 
         actual_labels, predicted_labels = self.get_actual_and_predicted_labels(test_features, classifier)
         precision = self.find_precision(actual_labels, predicted_labels)
         recall = self.find_recall(actual_labels, predicted_labels)
@@ -229,6 +232,7 @@ class BookClassifier:
         self.clean_train_data_and_find_best_features()
     
     def clean_train_data_and_find_best_features(self):
+        #Top n best unigram features are selected
         freq_dist_obj = FreqDist()
         cond_freq_dist_obj = ConditionalFreqDist()
         self.book_category_set = set() 
@@ -260,7 +264,9 @@ class BookClassifier:
             for bookid in self.book_category_set:
                 score += BigramAssocMeasures.chi_sq(cond_freq_dist_obj[bookid][word], (freq, cond_freq_dist_obj[bookid].N()), total_word_count)
             word_score_dict[word] = score
+        self.select_top_n_best_features(word_score_dict)
         
+    def select_top_n_best_features(self, word_score_dict):
         self.selected_features =  sorted(word_score_dict.iteritems(), key=operator.itemgetter(1), reverse=True)
         total_select_count = int(len(self.selected_features) * self.unigram_threshold/float(100))
         self.selected_features = self.selected_features[:total_select_count]
@@ -270,6 +276,7 @@ class BookClassifier:
         return [word  for word in re.sub("[^a-zA-Z]"," ", toc).split(" ") if word]
 
     def clean_and_structure_toc_data(self):
+        #Extra training data - table of contents are cleaned and structured
         for instance in self.toc_list:
             raw_data = instance and instance.strip() and instance.strip().replace("↵","")
             if not raw_data:continue
@@ -288,12 +295,14 @@ class BookClassifier:
             self.load_more_train_data()
 
     def load_train_data(self):
+        #Train data loaded 
         self.book_instances = []
         for instance in self.train_file_fd.readlines():
             self.book_instances.append(instance) 
         self.book_instances = self.book_instances[1:]
 
     def load_more_train_data(self):
+        #More training data are loaded for problem 2
         for instance in self.train_file_2_fd.readlines():
             self.toc_list.append(instance)
         self.toc_list = self.toc_list[1:]
