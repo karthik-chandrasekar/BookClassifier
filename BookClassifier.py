@@ -19,11 +19,12 @@ class BookClassifier:
         config.read("BookClassifier.config")
 
         cur_dir = os.getcwd()
+        
         #Config parameters
         data_dir = config.get('GLOBAL', 'data_dir')
         op_dir = config.get('GLOBAL', 'output_dir')
         train_file = config.get('GLOBAL', 'train_file_name')
-        train_file_2 = config.get('GLOBAL', 'second_train_file_name')
+        train_file_2 = config.get('GLOBAL', 'train_file_name_2')
         self.bigram_threshold = int(config.get('GLOBAL', 'bigram_threshold'))
         self.k_fold = int(config.get('GLOBAL', 'k_fold'))
         self.unigram_threshold = int(config.get('GLOBAL', 'unigram_threshold'))
@@ -62,6 +63,7 @@ class BookClassifier:
     def initialize_logger(self):
         logging.basicConfig(filename=self.logger_file, level=logging.INFO)
         logging.info("Initialized logger")
+        self.logging = logging
 
     def run_main(self):
         self.preprocessing()
@@ -115,7 +117,7 @@ class BookClassifier:
         
     def testing(self):
         for instance in self.test_cases:
-            raw_data = instance.strip() and instance.strip().split("\t")
+            raw_data = instance.strip() and instance.strip() and instance.strip().split("\t")
             if raw_data:
                 features = []
                 train_feats_list = []
@@ -134,6 +136,8 @@ class BookClassifier:
         fold_size = int(train_feats_count / self.k_fold)
         nb_accuracy_list = []
         svm_accuracy_list = []
+        nb_f_val_list = []
+        svm_f_val_list = []
 
         for a in range(self.k_fold):
             start_index = a * fold_size
@@ -145,27 +149,29 @@ class BookClassifier:
             self.nb_classifier = NaiveBayesClassifier.train(train_features)         
             nb_acc = nltk.classify.util.accuracy(self.nb_classifier, test_features) 
             nb_accuracy_list.append(nb_acc)
-            print "\n ACCURACY - NAIVE BAYE CLASSIFIER: %s \n" % nb_acc
        
             self.svm_classifier = SklearnClassifier(LinearSVC()) 
             self.svm_classifier.train(train_features)
             svm_acc = nltk.classify.util.accuracy(self.svm_classifier, test_features) 
             svm_accuracy_list.append(svm_acc)
-            print "\n ACCURACY - SVM  CLASSIFIER: %s \n" % svm_acc
 
             #Find F-Measure
-            self.compute_measures(test_features, self.nb_classifier, "NB")
-            self.compute_measures(test_features, self.svm_classifier, "SVM")
+            nb_f_val = self.compute_measures(test_features, self.nb_classifier, "NB")
+            nb_f_val_list.append(nb_f_val)
+            svm_f_val = self.compute_measures(test_features, self.svm_classifier, "SVM")
+            svm_f_val_list.append(svm_f_val)
 
-        print 'Average acc %s' % (float(sum(nb_accuracy_list)/len(nb_accuracy_list)))
-        print 'Average svm acc %s' % (float(sum(svm_accuracy_list)/len(svm_accuracy_list)))
+        self.logging.info('\nAverage accuracy of Naive Bayes Classifier %s' % (float(sum(nb_accuracy_list)/len(nb_accuracy_list))))
+        self.logging.info('\nAverage accuracy of SVM Classifier %s' % (float(sum(svm_accuracy_list)/len(svm_accuracy_list))))
+        self.logging.info('\nAverage F measure of Naive Bayes Classifier %s' % (float(sum(nb_f_val_list)/len(nb_f_val_list))))
+        self.logging.info('\nAverage F measure of SVM Classifier %s' % (float(sum(svm_f_val_list)/len(svm_f_val_list))))
 
     def compute_measures(self, test_features, classifier, classifier_name):
         actual_labels, predicted_labels = self.get_actual_and_predicted_labels(test_features, classifier)
         precision = self.find_precision(actual_labels, predicted_labels)
         recall = self.find_recall(actual_labels, predicted_labels)
         f_val = self.find_f_measure(precision, recall)
-        print "F val for %s is %s" % (classifier_name, f_val)
+        return f_val
 
     def find_precision(self, actual_labels, predicted_labels):
         if not actual_labels and not predicted_labels:
@@ -252,7 +258,7 @@ class BookClassifier:
 
     def clean_and_structure_toc_data(self):
         for instance in self.toc_list:
-            raw_data = instance and instance.strip().replace("↵","")
+            raw_data = instance and instance.strip() and instance.strip().replace("↵","")
             if not raw_data:continue
             bookid = raw_data.split("\t")[0]
             clean_data = self.clean_book_toc(raw_data)
