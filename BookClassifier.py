@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #coding=utf-8
 
 import operator, string, re, sys
@@ -82,23 +83,27 @@ class BookClassifier:
 
     def feature_extraction(self):
         for instance in self.book_instances:
-            raw_data = instance and instance.strip() and instance.strip().split("\t")
-            if raw_data and len(raw_data) == 4:
-                bookid = raw_data[0]
-                features = []
-                features.extend(self.clean_book_title(raw_data[2]))
-                features.extend(self.clean_author_name(raw_data[3]))
-                features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
-                train_feats_list = []
-                for feat in features:
-                    if feat and feat.lower() in self.selected_features and feat.lower() not in self.stopwords_set:
-                        train_feats_list.append((feat.lower(), True))
-                train_feats_list.extend(self.get_bigram([pair[0] for pair in train_feats_list if pair]))
-            elif raw_data and len(raw_data) == 3:
-                self.test_cases.append(instance)
-            else:
+            try:
+                raw_data = instance and instance.strip() and instance.strip().split("\t")
+                if raw_data and len(raw_data) == 4:
+                    bookid = raw_data[0]
+                    features = []
+                    features.extend(self.clean_book_title(raw_data[2]))
+                    features.extend(self.clean_author_name(raw_data[3]))
+                    features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
+                    train_feats_list = []
+                    for feat in features:
+                        if feat and feat.lower() in self.selected_features and feat.lower() not in self.stopwords_set:
+                            train_feats_list.append((feat.lower(), True))
+                    train_feats_list.extend(self.get_bigram([pair[0] for pair in train_feats_list if pair]))
+                elif raw_data and len(raw_data) == 3:
+                    self.test_cases.append(instance)
+                else:
+                    continue
+                self.training_feats.append((dict(train_feats_list), bookid))            
+            except:
+                self.logging.info("Exception while running this instance %s\n" % instance)
                 continue
-            self.training_feats.append((dict(train_feats_list), bookid))            
 
     def get_bigram(self, features_list):
         score = BigramAssocMeasures.chi_sq
@@ -117,19 +122,23 @@ class BookClassifier:
         
     def testing(self):
         for instance in self.test_cases:
-            raw_data = instance.strip() and instance.strip() and instance.strip().split("\t")
-            if raw_data:
-                features = []
-                train_feats_list = []
-                features.extend(self.clean_book_title(raw_data[1]))
-                features.extend(self.clean_author_name(raw_data[2]))
-                for feat in features:
-                    if feat and feat.lower() not in self.stopwords_set and feat.lower() in self.selected_features:
-                        train_feats_list.append((feat.lower(),True)) 
-                train_feats_list.extend(self.get_bigram([pair[0] for pair in train_feats_list if pair]))
-            
-            label = self.svm_classifier.classify(dict(train_feats_list))
-            self.output_file_fd.write("%s\t%s\n" % (raw_data[0], label))
+            try:
+                raw_data = instance.strip() and instance.strip() and instance.strip().split("\t")
+                if raw_data:
+                    features = []
+                    train_feats_list = []
+                    features.extend(self.clean_book_title(raw_data[1]))
+                    features.extend(self.clean_author_name(raw_data[2]))
+                    for feat in features:
+                        if feat and feat.lower() not in self.stopwords_set and feat.lower() in self.selected_features:
+                            train_feats_list.append((feat.lower(),True)) 
+                    train_feats_list.extend(self.get_bigram([pair[0] for pair in train_feats_list if pair]))
+                
+                label = self.svm_classifier.classify(dict(train_feats_list))
+                self.output_file_fd.write("%s\t%s\n" % (raw_data[0], label))
+            except:
+                self.logging.info("Exception while running this instance %s\n" % instance)
+                
 
     def cross_validation(self):
         train_feats_count = int(len(self.training_feats))
@@ -161,10 +170,10 @@ class BookClassifier:
             svm_f_val = self.compute_measures(test_features, self.svm_classifier, "SVM")
             svm_f_val_list.append(svm_f_val)
 
-        self.logging.info('\nAverage accuracy of Naive Bayes Classifier %s' % (float(sum(nb_accuracy_list)/len(nb_accuracy_list))))
-        self.logging.info('\nAverage accuracy of SVM Classifier %s' % (float(sum(svm_accuracy_list)/len(svm_accuracy_list))))
-        self.logging.info('\nAverage F measure of Naive Bayes Classifier %s' % (float(sum(nb_f_val_list)/len(nb_f_val_list))))
-        self.logging.info('\nAverage F measure of SVM Classifier %s' % (float(sum(svm_f_val_list)/len(svm_f_val_list))))
+        self.logging.info('Average accuracy of Naive Bayes Classifier %s\n' % (float(sum(nb_accuracy_list)/len(nb_accuracy_list))))
+        self.logging.info('Average accuracy of SVM Classifier %s\n' % (float(sum(svm_accuracy_list)/len(svm_accuracy_list))))
+        self.logging.info('Average F measure of Naive Bayes Classifier %s\n' % (float(sum(nb_f_val_list)/len(nb_f_val_list))))
+        self.logging.info('Average F measure of SVM Classifier %s\n' % (float(sum(svm_f_val_list)/len(svm_f_val_list))))
 
     def compute_measures(self, test_features, classifier, classifier_name):
         actual_labels, predicted_labels = self.get_actual_and_predicted_labels(test_features, classifier)
@@ -225,17 +234,21 @@ class BookClassifier:
         self.book_category_set = set() 
 
         for instance in self.book_instances:
-            raw_data = instance and instance.strip() and instance.strip().split("\t") 
-            if not raw_data or len(raw_data) != 4 : continue  
-            bookid  = raw_data[0]
-            self.book_category_set.add(bookid)
-            features = []
-            features.extend(self.clean_book_title(raw_data[2]))
-            features.extend(self.clean_author_name(raw_data[3]))
-            features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
-            for feat in features:
-                freq_dist_obj.inc(feat)
-                cond_freq_dist_obj[bookid].inc(feat)
+            try:
+                raw_data = instance and instance.strip() and instance.strip().split("\t") 
+                if not raw_data or len(raw_data) != 4 : continue  
+                bookid  = raw_data[0]
+                self.book_category_set.add(bookid)
+                features = []
+                features.extend(self.clean_book_title(raw_data[2]))
+                features.extend(self.clean_author_name(raw_data[3]))
+                features.extend(self.bookid_to_toc_dict.get(raw_data[1], []))
+                for feat in features:
+                    freq_dist_obj.inc(feat)
+                    cond_freq_dist_obj[bookid].inc(feat)
+            except:
+                self.logging.info("Exception while running this instance %s \n" % instance)
+                
         total_word_count = 0    
         for bookid in self.book_category_set:
             total_word_count += cond_freq_dist_obj[bookid].N()
